@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Funding conversation</title>
+  </head>
+  <body style="font-family: Arial, Helvetica, sans-serif; background-color: #f7f7f7; margin: 0; padding: 24px; color: #1f2933;">
+    <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 24px; border-radius: 8px; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);">
+      <p style="font-size: 16px; line-height: 1.6; margin-top: 0;">
+        Hi {{ contact_name or "there" }},
+      </p>
+      <p style="font-size: 15px; line-height: 1.7; margin-bottom: 16px;">
+        I hope your week is going well. I was reviewing the recent activity for {{ company or "your business" }} and noticed steady deposits around {{ avg_deposits | default('your recent averages') }}.
+        {% if nsf_count is not none %}
+        We also saw NSF occurrences at {{ nsf_count }}, and our team can help you keep those under control.
+        {% endif %}
+      </p>
+      <p style="font-size: 15px; line-height: 1.7; margin-bottom: 16px;">
+        Our programs at {{ business_name }} focus on preserving your day-to-day operations while unlocking predictable capital. I can prepare a concise outline that aligns with your current momentum so you can decide what fits best.
+      </p>
+      <p style="font-size: 15px; line-height: 1.7; margin-bottom: 16px;">
+        Would you prefer a quick call or a summary via email? Let me know what works and I'll handle the rest.
+      </p>
+      <p style="font-size: 15px; line-height: 1.7; margin-bottom: 0;">
+        Warm regards,<br />
+        {{ from_name }}<br />
+        {{ business_name }}
+      </p>
+      <footer style="font-size: 12px; line-height: 1.6; color: #6b7280; margin-top: 32px; border-top: 1px solid #e5e7eb; padding-top: 16px;">
+        <p style="margin: 0 0 8px 0;">{{ business_name }} • {{ business_address }}</p>
+        <p style="margin: 0;">Prefer not to receive these updates? <a href="{{ unsubscribe_url }}" style="color: #1d4ed8;">Unsubscribe instantly</a>.</p>
+      </footer>
+    </div>
+  </body>
+</html>

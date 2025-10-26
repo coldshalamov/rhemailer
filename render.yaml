@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: rh-emailer
+    env: docker
+    plan: free
+    region: oregon
+    dockerfilePath: Dockerfile
+    envVars:
+      - key: API_BEARER_TOKEN
+        sync: false
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: FROM_EMAIL
+        value: funding@rhfunding.io
+      - key: FROM_NAME
+        value: "RedHat Funding"
+      - key: BUSINESS_NAME
+        value: "RedHat Funding"
+      - key: BUSINESS_ADDRESS
+        value: "123 Main St, Fort Lauderdale, FL 33301, USA"
+      - key: OPTOUT_MODE
+        value: link
+      - key: OPTOUT_LINK
+        value: https://rhfunding.io/unsubscribe
+      - key: MPS_LIMIT
+        value: "60"
+      - key: WINDOW_SECONDS
+        value: "60"
+      - key: DB_PATH
+        value: sqlite:////tmp/emailer.db
+      - key: REPLY_TO_EMAIL
+        value: support@rhfunding.io
+      - key: LOG_LEVEL
+        value: INFO

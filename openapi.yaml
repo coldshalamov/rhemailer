@@ -1,0 +1,181 @@
+openapi: 3.0.3
+info:
+  title: rh-emailer
+  version: 1.0.0
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: health_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+  /prepare:
+    post:
+      summary: Prepare outreach payloads
+      operationId: prepare_prepare_post
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                tone:
+                  type: string
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrepareResponse'
+  /send:
+    post:
+      summary: Queue email send job
+      operationId: send_send_post
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendResponse'
+  /status/{job_id}:
+    get:
+      summary: Retrieve job status
+      operationId: status_status__job_id__get
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+  /unsubscribe:
+    get:
+      summary: Add email to suppression list
+      operationId: unsubscribe_unsubscribe_get
+      parameters:
+        - name: email
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuppressionResponse'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    PrepareResponse:
+      type: object
+      properties:
+        prepare_id:
+          type: string
+        count:
+          type: integer
+        preview:
+          type: array
+          items:
+            type: object
+            properties:
+              lead:
+                type: object
+              email_html:
+                type: string
+        metrics:
+          type: object
+      required:
+        - prepare_id
+        - count
+        - preview
+        - metrics
+    SendRequest:
+      type: object
+      properties:
+        prepare_id:
+          type: string
+        dry_run:
+          type: boolean
+          default: true
+        tone:
+          type: string
+      required:
+        - prepare_id
+    SendResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+        queued:
+          type: boolean
+        summary:
+          type: object
+      required:
+        - job_id
+        - queued
+        - summary
+    StatusResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+        payload:
+          type: object
+          nullable: true
+        result:
+          type: object
+          nullable: true
+      required:
+        - job_id
+        - status
+    SuppressionResponse:
+      type: object
+      properties:
+        email:
+          type: string
+        suppressed:
+          type: boolean
+      required:
+        - email
+        - suppressed
