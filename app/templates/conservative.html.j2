@@ -6,6 +6,9 @@
   </head>
   <body style="font-family: Arial, Helvetica, sans-serif; background-color: #f7f7f7; margin: 0; padding: 24px; color: #1f2933;">
     <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 24px; border-radius: 8px; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);">
+      {% if custom_body_html %}
+      {{ custom_body_html | safe }}
+      {% else %}
       <p style="font-size: 16px; line-height: 1.6; margin-top: 0;">
         Hi {{ contact_name or "there" }},
       </p>
@@ -26,6 +29,7 @@
         {{ from_name }}<br />
         {{ business_name }}
       </p>
+      {% endif %}
       <footer style="font-size: 12px; line-height: 1.6; color: #6b7280; margin-top: 32px; border-top: 1px solid #e5e7eb; padding-top: 16px;">
         <p style="margin: 0 0 8px 0;">{{ business_name }} • {{ business_address }}</p>
         <p style="margin: 0;">Prefer not to receive these updates? <a href="{{ unsubscribe_url }}" style="color: #1d4ed8;">Unsubscribe instantly</a>.</p>

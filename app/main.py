@@ -4,16 +4,26 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+from ratelimit import limits
 
 from . import db
 from .parsers import ParsedDocument, handle_uploads, redact_payload
-from .utils import EmailPayload, render_email, send_email_with_fallback
+from .utils import (
+    BUSINESS_ADDRESS,
+    MPS_LIMIT,
+    OPTOUT_LINK,
+    WINDOW_SECONDS,
+    EmailPayload,
+    render_email,
+    send_email_with_fallback,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -63,6 +73,25 @@ class StatusResponse(BaseModel):
 class SuppressionResponse(BaseModel):
     email: str
     suppressed: bool
+
+
+class DirectSendRequest(BaseModel):
+    to_email: str = Field(..., description="Recipient email address")
+    subject: str = Field(default="Funding Offer", description="Email subject line")
+    body_html: str = Field(..., description="HTML body to send")
+    tone: Optional[str] = Field(
+        default=DEFAULT_TONE,
+        description="Optional template tone to wrap the body",
+    )
+    dry_run: bool = Field(
+        default=True, description="Simulate send without dispatching the email"
+    )
+
+
+class DirectSendResponse(BaseModel):
+    sent: bool
+    id: str
+    reason: Optional[str] = None
 
 
 def auth(credentials: HTTPAuthorizationCredentials = Depends(security)) -> None:
@@ -228,8 +257,61 @@ def unsubscribe(email: str) -> SuppressionResponse:
     return SuppressionResponse(email=email, suppressed=added)
 
 
+@app.post("/direct_send", response_model=DirectSendResponse)
+@limits(calls=MPS_LIMIT, period=WINDOW_SECONDS)
+def direct_send(request: DirectSendRequest, _: None = Depends(auth)) -> DirectSendResponse:
+    tone = (request.tone or "").lower() if request.tone is not None else None
+    message_id = str(uuid.uuid4())
+
+    with db.get_session() as session:
+        if db.is_suppressed(session, request.to_email):
+            return DirectSendResponse(sent=False, id=message_id, reason="suppressed")
+
+    if request.dry_run:
+        return DirectSendResponse(sent=False, id=message_id, reason="dry_run")
+
+    rendered_html = _render_direct_send_html(request, tone)
+
+    payload = EmailPayload(
+        to_email=request.to_email,
+        subject=request.subject,
+        html_content=rendered_html,
+    )
+    sent = send_email_with_fallback(payload)
+    reason = None if sent else "delivery_failed"
+    return DirectSendResponse(sent=sent, id=message_id, reason=reason)
+
+
 def _resolve_template(tone: str) -> str:
     if tone not in {"conservative", "assertive"}:
         logger.warning("Unknown tone '%s', defaulting to conservative", tone)
         tone = DEFAULT_TONE
     return f"{tone}.html.j2"
+
+
+def _render_direct_send_html(request: DirectSendRequest, tone: Optional[str]) -> str:
+    if tone:
+        template_name = _resolve_template(tone)
+        context: Dict[str, Any] = {
+            "contact_name": "User",
+            "avg_deposits": 0,
+            "nsf_count": 0,
+            "email": request.to_email,
+            "custom_body_html": request.body_html,
+        }
+        return render_email(template_name, context)
+
+    unsubscribe_url = OPTOUT_LINK
+    if request.to_email:
+        separator = "&" if "?" in unsubscribe_url else "?"
+        unsubscribe_url = f"{unsubscribe_url}{separator}email={request.to_email}"
+
+    footer = (
+        "<footer style=\"font-size: 12px; line-height: 1.6; color: #6b7280; margin-top: 32px;"
+        " border-top: 1px solid #e5e7eb; padding-top: 16px;\">"
+        f"<p style=\"margin: 0 0 8px 0;\">{BUSINESS_ADDRESS}</p>"
+        f"<p style=\"margin: 0;\">Prefer not to receive these updates? "
+        f"<a href=\"{unsubscribe_url}\" style=\"color: #1d4ed8;\">Unsubscribe instantly</a>."
+        "</p></footer>"
+    )
+    return f"{request.body_html}{footer}"
