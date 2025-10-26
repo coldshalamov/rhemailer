@@ -4,16 +4,26 @@ from __future__ import annotations
 
 import logging
 import os
+from uuid import uuid4
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+from ratelimit import limits, sleep_and_retry
 
 from . import db
 from .parsers import ParsedDocument, handle_uploads, redact_payload
-from .utils import EmailPayload, render_email, send_email_with_fallback
+from .utils import (
+    BUSINESS_ADDRESS,
+    OPTOUT_LINK,
+    EmailPayload,
+    MPS_LIMIT,
+    WINDOW_SECONDS,
+    render_email,
+    send_email_with_fallback,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -51,6 +61,26 @@ class SendResponse(BaseModel):
     job_id: str
     queued: bool
     summary: Dict[str, Any]
+
+
+class DirectSendRequest(BaseModel):
+    to_email: str = Field(..., description="Recipient email address")
+    subject: str = Field(default="Funding Offer", description="Email subject line")
+    body_html: str = Field(..., description="HTML body content to embed")
+    tone: Optional[str] = Field(
+        default=DEFAULT_TONE,
+        description="Tone template to wrap the email body",
+    )
+    dry_run: bool = Field(
+        default=True,
+        description="Simulate the send without dispatching the email",
+    )
+
+
+class DirectSendResponse(BaseModel):
+    id: str
+    sent: bool
+    reason: Optional[str] = Field(default=None, description="Reason email was not sent")
 
 
 class StatusResponse(BaseModel):
@@ -205,6 +235,48 @@ def _process_sends(
         db.update_job_status(session, job_id, status, result=summary)
 
     return summary
+
+
+def _build_direct_send_html(request: DirectSendRequest) -> str:
+    tone = (request.tone or DEFAULT_TONE).lower()
+    template_name = _resolve_template(tone)
+    context = {
+        "contact_name": "User",
+        "avg_deposits": 0,
+        "nsf_count": 0,
+        "email": request.to_email,
+        "custom_body_html": request.body_html,
+        "business_address": BUSINESS_ADDRESS,
+        "unsubscribe_url": OPTOUT_LINK,
+    }
+    return render_email(template_name, context)
+
+
+@app.post("/direct_send", response_model=DirectSendResponse)
+@sleep_and_retry
+@limits(calls=MPS_LIMIT, period=WINDOW_SECONDS)
+def direct_send_endpoint(
+    request: DirectSendRequest, _: None = Depends(auth)
+) -> DirectSendResponse:
+    message_id = str(uuid4())
+
+    with db.get_session() as session:
+        if db.is_suppressed(session, request.to_email):
+            return DirectSendResponse(id=message_id, sent=False, reason="suppressed")
+
+    rendered_html = _build_direct_send_html(request)
+
+    if request.dry_run:
+        return DirectSendResponse(id=message_id, sent=False)
+
+    payload = EmailPayload(
+        to_email=request.to_email,
+        subject=request.subject,
+        html_content=rendered_html,
+    )
+
+    sent = send_email_with_fallback(payload)
+    return DirectSendResponse(id=message_id, sent=sent)
 
 
 @app.get("/status/{job_id}", response_model=StatusResponse)
