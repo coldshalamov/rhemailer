@@ -63,6 +63,25 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SendResponse'
+  /direct_send:
+    post:
+      summary: Send single email immediately
+      operationId: direct_send_post
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DirectSendRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DirectSendResponse'
   /status/{job_id}:
     get:
       summary: Retrieve job status
@@ -153,6 +172,39 @@ components:
         - job_id
         - queued
         - summary
+    DirectSendRequest:
+      type: object
+      properties:
+        to_email:
+          type: string
+        subject:
+          type: string
+          default: Funding Offer
+        body_html:
+          type: string
+        tone:
+          type: string
+          nullable: true
+          default: conservative
+        dry_run:
+          type: boolean
+          default: true
+      required:
+        - to_email
+        - body_html
+    DirectSendResponse:
+      type: object
+      properties:
+        sent:
+          type: boolean
+        id:
+          type: string
+        reason:
+          type: string
+          nullable: true
+      required:
+        - sent
+        - id
     StatusResponse:
       type: object
       properties:
