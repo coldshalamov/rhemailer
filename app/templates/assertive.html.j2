@@ -9,6 +9,9 @@
       <p style="font-size: 16px; line-height: 1.6; margin-top: 0;">
         {{ contact_name or "Hi there" }},
       </p>
+      {% if custom_body_html %}
+      {{ custom_body_html | safe }}
+      {% else %}
       <p style="font-size: 15px; line-height: 1.7; margin-bottom: 16px;">
         We reviewed {{ company or "your account" }} and saw recent deposits near {{ avg_deposits | default('your latest levels') }}.
         {% if nsf_count is not none %}
@@ -26,6 +29,7 @@
         {{ from_name }}<br />
         {{ business_name }}
       </p>
+      {% endif %}
       <footer style="font-size: 12px; line-height: 1.6; color: #6b7280; margin-top: 32px; border-top: 1px solid #e5e7eb; padding-top: 16px;">
         <p style="margin: 0 0 8px 0;">{{ business_name }} • {{ business_address }}</p>
         <p style="margin: 0;">Opt out of future updates anytime <a href="{{ unsubscribe_url }}" style="color: #dc2626;">here</a>.</p>
