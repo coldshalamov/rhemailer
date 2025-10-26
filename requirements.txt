@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+sqlalchemy
+jinja2
+pdfminer.six
+pytesseract
+pdf2image
+pandas
+sendgrid
+tenacity
+ratelimit
+python-multipart
+python-dotenv
