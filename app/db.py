@@ -13,7 +13,11 @@ from sqlalchemy import Column, DateTime, String, Text, create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
-DATABASE_URL = os.getenv("DB_PATH") or os.getenv("DATABASE_URL", "sqlite:////tmp/emailer.db")
+os.makedirs("tmp", exist_ok=True)
+
+DATABASE_URL = os.getenv("DB_PATH") or os.getenv(
+    "DATABASE_URL", "sqlite:///tmp/emailer.db"
+)
 
 Base = declarative_base()
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
