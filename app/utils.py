@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from ratelimit import limits, sleep_and_retry
 from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Email, Mail
+from sendgrid.helpers.mail import Email, Mail, ReplyTo, To
 from tenacity import RetryError, retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
@@ -75,12 +75,12 @@ class EmailPayload:
 def _build_mail(payload: EmailPayload) -> Mail:
     message = Mail(
         from_email=Email(FROM_EMAIL, FROM_NAME),
-        to_emails=Email(payload.to_email),
         subject=payload.subject,
         html_content=payload.html_content,
     )
+    message.add_to(To(email=payload.to_email))
     if REPLY_TO_EMAIL:
-        message.reply_to = Email(REPLY_TO_EMAIL)
+        message.reply_to = ReplyTo(email=REPLY_TO_EMAIL, name=FROM_NAME)
     return message
 
 
