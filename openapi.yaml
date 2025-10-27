@@ -1,142 +1,9 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
-  title: rh-emailer
+  title: RedHat Funding Emailer API
   version: 1.1.2
-paths:
-  /health:
-    get:
-      summary: Health check
-      operationId: health_health_get
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-  /prepare:
-    post:
-      summary: Prepare outreach payloads
-      operationId: prepare_prepare_post
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              required: [files]
-              properties:
-                tone:
-                  type: string
-                  enum: [conservative, assertive]
-                  default: conservative
-                files:
-                  type: array
-                  items:
-                    type: string
-                    format: binary
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PrepareResponse'
-  /send:
-    post:
-      summary: Queue email send job
-      operationId: send_send_post
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SendRequest'
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SendResponse'
-  /status/{job_id}:
-    get:
-      summary: Job status
-      operationId: status_status__job_id__get
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: job_id
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StatusResponse'
-  /unsubscribe:
-    get:
-      summary: Add email to suppression list
-      operationId: unsubscribe_unsubscribe_get
-      parameters:
-        - name: email
-          in: query
-          required: true
-          schema: { type: string }
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SuppressionResponse'
-    post:
-      summary: Add email to suppression list (authenticated)
-      operationId: unsubscribe_unsubscribe_post
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UnsubscribeRequest'
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SuppressionResponse'
-  /direct_send:
-    post:
-      summary: Send a single email immediately
-      operationId: direct_send_post
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/DirectSendRequest'
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DirectSendResponse'
+servers:
+  - url: https://rh-emailer.onrender.com
 components:
   securitySchemes:
     bearerAuth:
@@ -157,6 +24,7 @@ components:
               email_html: { type: string }
         metrics: { type: object }
       required: [prepare_id, count, preview, metrics]
+
     SendRequest:
       type: object
       properties:
@@ -166,6 +34,7 @@ components:
           type: string
           nullable: true
       required: [prepare_id]
+
     SendResponse:
       type: object
       properties:
@@ -173,6 +42,29 @@ components:
         queued: { type: boolean }
         summary: { type: object }
       required: [job_id, queued, summary]
+
+    StatusResponse:
+      type: object
+      properties:
+        job_id: { type: string }
+        status: { type: string }
+        payload: { type: object, nullable: true }
+        result: { type: object, nullable: true }
+      required: [job_id, status]
+
+    UnsubscribeRequest:
+      type: object
+      properties:
+        email: { type: string, format: email }
+      required: [email]
+
+    SuppressionResponse:
+      type: object
+      properties:
+        email: { type: string }
+        suppressed: { type: boolean }
+      required: [email, suppressed]
+
     DirectSendRequest:
       type: object
       properties:
@@ -185,6 +77,7 @@ components:
           default: conservative
         dry_run: { type: boolean, default: true }
       required: [to_email, body_html]
+
     DirectSendResponse:
       type: object
       properties:
@@ -192,22 +85,131 @@ components:
         id: { type: string }
         reason: { type: string, nullable: true }
       required: [sent, id]
-    StatusResponse:
-      type: object
-      properties:
-        job_id: { type: string }
-        status: { type: string }
-        payload: { type: object, nullable: true }
-        result: { type: object, nullable: true }
-      required: [job_id, status]
-    UnsubscribeRequest:
-      type: object
-      properties:
-        email: { type: string, format: email }
-      required: [email]
-    SuppressionResponse:
-      type: object
-      properties:
-        email: { type: string }
-        suppressed: { type: boolean }
-      required: [email, suppressed]
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  version: { type: string }
+
+  /prepare:
+    post:
+      operationId: prepareBatch
+      summary: Parse uploaded files and return normalized previews
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                tone:
+                  type: string
+                  enum: [conservative, assertive]
+                  default: conservative
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrepareResponse' }
+
+  /send:
+    post:
+      operationId: sendBatch
+      summary: Queue email send job
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SendRequest' }
+      responses:
+        "200":
+          description: Job queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SendResponse' }
+
+  /direct_send:
+    post:
+      operationId: direct_send_post
+      summary: Send a single email immediately
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: payload
+          in: query
+          required: false
+          description: "LEGACY: URL-encoded JSON for DirectSendRequest (prefer JSON body)."
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DirectSendRequest' }
+      responses:
+        "200":
+          description: Sent (or dry-accepted)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DirectSendResponse' }
+
+  /status/{job_id}:
+    get:
+      operationId: checkStatus
+      summary: Check job status
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatusResponse' }
+
+  /unsubscribe:
+    post:
+      operationId: unsubscribeEmail
+      summary: Add email to suppression list
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UnsubscribeRequest' }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuppressionResponse' }

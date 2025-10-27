@@ -1,13 +1,13 @@
 """FastAPI application entrypoint for rh-emailer."""
 
-from __future__ import annotations
-
 import logging
 import os
 import uuid
 from typing import Any, Dict, List, Optional, Literal
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+import json
+
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
@@ -77,6 +77,9 @@ class DirectSendResponse(BaseModel):
     reason: Optional[str] = None
 
 
+DirectSendRequest.model_rebuild()
+DirectSendResponse.model_rebuild()
+
 class StatusResponse(BaseModel):
     job_id: str
     status: str
@@ -102,7 +105,7 @@ def auth(credentials: HTTPAuthorizationCredentials = Depends(security)) -> None:
 
 @app.get("/health")
 def health() -> Dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "version": app.version if hasattr(app, "version") else "unknown"}
 
 
 @app.post("/prepare", response_model=PrepareResponse)
@@ -233,13 +236,44 @@ def _process_sends(
         db.update_job_status(session, job_id, status, result=summary)
 
     return summary
+
+
 @app.post("/direct_send", response_model=DirectSendResponse)
 @sleep_and_retry
 @limits(calls=MPS_LIMIT, period=WINDOW_SECONDS)
 def direct_send_endpoint(
-    payload: DirectSendRequest, _: None = Depends(auth)
+    # Preferred path: JSON body
+    payload: Optional[DirectSendRequest] = Body(None),
+    # Legacy path: ?payload=<JSON>
+    payload_q: Optional[str] = Query(None, alias="payload"),
+    _: None = Depends(auth),
 ) -> DirectSendResponse:
     message_id = str(uuid.uuid4())
+
+    # Accept either JSON body or legacy ?payload=
+    if payload is None:
+        if not payload_q:
+            raise HTTPException(
+                status_code=422,
+                detail="Missing request body (DirectSendRequest) or legacy ?payload=<json> query parameter."
+            )
+        try:
+            # Try pydantic v2, then v1
+            try:
+                payload = DirectSendRequest.model_validate_json(payload_q)  # pydantic v2
+            except AttributeError:
+                payload = DirectSendRequest.parse_raw(payload_q)            # pydantic v1
+        except Exception as e:
+            # Clarify if it's JSON vs schema
+            try:
+                json.loads(payload_q)
+            except json.JSONDecodeError as decode_error:
+                raise HTTPException(status_code=422, detail=f"Invalid JSON in query param 'payload': {decode_error}") from decode_error
+            raise HTTPException(status_code=422, detail=f"Invalid DirectSendRequest in query param 'payload': {e}") from e
+
+    # Body must not be empty
+    if not payload.body_html or not str(payload.body_html).strip():
+        raise HTTPException(status_code=422, detail="body_html is required and cannot be empty.")
 
     # Suppression pre-check
     with db.get_session() as session:
@@ -249,13 +283,19 @@ def direct_send_endpoint(
     email_payload = EmailPayload(
         to_email=str(payload.to_email),
         subject=payload.subject,
-        html_content=payload.body_html,  # GPT ensures footer; accept as-is
+        html_content=payload.body_html,  # footer should already be present per agent
     )
 
+    # Dry-run behavior: indicate acceptance without delivery
     if payload.dry_run:
         return DirectSendResponse(sent=True, id=message_id)
 
-    sent_ok = send_email_with_fallback(email_payload)
+    try:
+        sent_ok = send_email_with_fallback(email_payload)
+    except Exception:
+        logger.exception("direct_send send failed")
+        return DirectSendResponse(sent=False, id=message_id, reason="send failed")
+
     return DirectSendResponse(sent=bool(sent_ok), id=message_id, reason=None if sent_ok else "send failed")
 
 

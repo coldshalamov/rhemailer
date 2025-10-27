@@ -1,38 +1,140 @@
+import json
 import os
 from pathlib import Path
-from unittest import TestCase
-from unittest.mock import patch
 
+import pytest
+from fastapi.testclient import TestClient
 
-TEST_DB_PATH = Path("tmp/test_direct_send.db")
+TEST_DB_PATH = Path("tmp/test_emailer.db")
+TEST_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-
-if TEST_DB_PATH.exists():
-    TEST_DB_PATH.unlink()
-
-os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB_PATH}"
-os.environ["API_BEARER_TOKEN"] = "testtoken"
+os.environ.setdefault("DB_PATH", f"sqlite:///{TEST_DB_PATH}")
+os.environ.setdefault("API_BEARER_TOKEN", "dev")
 
 from app import db  # noqa: E402
-from app.main import DirectSendRequest, direct_send_endpoint  # noqa: E402
+from app.main import app  # noqa: E402
 
 
-class DirectSendEndpointTests(TestCase):
-    def setUp(self) -> None:
-        db.Base.metadata.drop_all(bind=db.engine)
-        db.Base.metadata.create_all(bind=db.engine)
+def auth() -> dict[str, str]:
+    return {"Authorization": "Bearer dev"}
 
-    def test_direct_send_dispatches_when_not_suppressed(self) -> None:
-        request = DirectSendRequest(
-            to_email="recipient@example.com",
-            body_html="<p>Custom body</p>",
-            dry_run=False,
-        )
 
-        with patch("app.main.send_email_with_fallback", return_value=True) as mock_send:
-            response = direct_send_endpoint(request, None)
+@pytest.fixture(autouse=True)
+def reset_db() -> None:
+    db.Base.metadata.drop_all(bind=db.engine)
+    db.Base.metadata.create_all(bind=db.engine)
+    yield
 
-        self.assertTrue(response.sent)
-        self.assertIsNotNone(response.id)
-        self.assertIsNone(response.reason)
-        mock_send.assert_called_once()
+
+@pytest.fixture()
+def client() -> TestClient:
+    return TestClient(app)
+
+
+def test_health_includes_version(client: TestClient) -> None:
+    res = client.get("/health", headers=auth())
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "ok"
+    assert body["version"]
+
+
+def test_direct_send_json_dry_run_ok(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    from app import utils
+
+    called = {"value": False}
+
+    def fake_send(_payload):
+        called["value"] = True
+        return True
+
+    monkeypatch.setattr(utils, "send_email_with_fallback", fake_send)
+
+    payload = {
+        "to_email": "test@example.com",
+        "subject": "Test",
+        "body_html": "<p>hi</p>",
+        "dry_run": True,
+    }
+    res = client.post("/direct_send", headers=auth(), json=payload)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["sent"] is True
+    assert "id" in body
+    assert called["value"] is False
+
+
+def test_direct_send_legacy_payload_ok(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    from app import utils
+
+    def fake_send(_payload):
+        return True
+
+    monkeypatch.setattr(utils, "send_email_with_fallback", fake_send)
+
+    legacy = {
+        "to_email": "test@example.com",
+        "subject": "Test",
+        "body_html": "<p>hi</p>",
+        "dry_run": True,
+    }
+    q = json.dumps(legacy)
+    res = client.post(f"/direct_send?payload={q}", headers=auth())
+    assert res.status_code == 200
+    assert res.json()["sent"] is True
+
+
+def test_direct_send_suppressed(client: TestClient) -> None:
+    with db.get_session() as session:
+        db.add_to_suppression(session, "test@example.com")
+
+    payload = {
+        "to_email": "test@example.com",
+        "subject": "Test",
+        "body_html": "<p>hi</p>",
+        "dry_run": False,
+    }
+    res = client.post("/direct_send", headers=auth(), json=payload)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["sent"] is False
+    assert body["reason"] == "suppressed"
+
+
+def test_direct_send_empty_body_html_rejected(client: TestClient) -> None:
+    payload = {
+        "to_email": "test@example.com",
+        "subject": "Test",
+        "body_html": "   ",
+        "dry_run": True,
+    }
+    res = client.post("/direct_send", headers=auth(), json=payload)
+    assert res.status_code == 422
+    assert "body_html" in res.json()["detail"]
+
+
+def test_direct_send_invalid_legacy_json(client: TestClient) -> None:
+    res = client.post("/direct_send?payload={not-json}", headers=auth())
+    assert res.status_code == 422
+    assert "Invalid JSON" in res.json()["detail"]
+
+
+def test_direct_send_real_send_failure(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    from app import utils
+
+    def fake_send(_payload):
+        raise RuntimeError("send fail")
+
+    monkeypatch.setattr(utils, "send_email_with_fallback", fake_send)
+
+    payload = {
+        "to_email": "test@example.com",
+        "subject": "Test",
+        "body_html": "<p>hi</p>",
+        "dry_run": False,
+    }
+    res = client.post("/direct_send", headers=auth(), json=payload)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["sent"] is False
+    assert body["reason"] == "send failed"

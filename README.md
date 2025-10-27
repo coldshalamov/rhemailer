@@ -48,6 +48,52 @@ curl -s -X POST http://localhost:8000/unsubscribe \
   -d '{"email":"optout@example.com"}'
 ```
 
+### Quick Tests
+
+**PowerShell (JSON body, preferred):**
+```powershell
+$uri = "https://rh-emailer.onrender.com/direct_send"
+$headers = @{ Authorization = "Bearer YOUR_TOKEN" }
+$body = @{
+  to_email  = "you@example.com"
+  subject   = "RedHat Emailer Test"
+  body_html = "<p>Dry-run test.</p><p>RedHat Funding, 123 Main St, Fort Lauderdale, FL 33301, USA. Unsubscribe: https://rhfunding.io/unsubscribe</p>"
+  dry_run   = $true
+} | ConvertTo-Json -Depth 5
+Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -ContentType "application/json" -Body $body
+
+
+PowerShell (LEGACY ?payload=):
+
+$base = "https://rh-emailer.onrender.com/direct_send"
+$headers = @{ Authorization = "Bearer YOUR_TOKEN" }
+$payload = @{
+  to_email  = "you@example.com"
+  subject   = "RedHat Emailer Test"
+  body_html = "Dry-run test."
+  dry_run   = $true
+} | ConvertTo-Json -Compress
+Add-Type -AssemblyName System.Web
+$u = New-Object System.UriBuilder($base)
+$q = [System.Web.HttpUtility]::ParseQueryString($u.Query)
+$q["payload"] = $payload
+$u.Query = $q.ToString()
+Invoke-RestMethod -Method POST -Uri $u.Uri.AbsoluteUri -Headers $headers
+```
+
+
+bash (JSON body):
+
+```bash
+curl -s -X POST "https://rh-emailer.onrender.com/direct_send" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"to_email":"you@example.com","subject":"RedHat Emailer Test","body_html":"<p>Dry-run test.</p><p>RedHat Funding, 123 Main St, Fort Lauderdale, FL 33301, USA. Unsubscribe: https://rhfunding.io/unsubscribe</p>","dry_run":true}'
+```
+
+
+Dry-run requests return sent = true to confirm the message was accepted even though it is not delivered.
+
 ### Environment Variables
 
 | Name | Description | Default |
