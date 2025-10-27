@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 import os
-from uuid import uuid4
-from typing import Any, Dict, List, Optional
+import uuid
+from typing import Any, Dict, List, Optional, Literal
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from ratelimit import limits, sleep_and_retry
 
 from . import db
@@ -31,7 +31,7 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 API_BEARER_TOKEN = os.getenv("API_BEARER_TOKEN")
 DEFAULT_TONE = "conservative"
 
-app = FastAPI(title="rh-emailer", version="1.0.0")
+app = FastAPI(title="rh-emailer", version="1.1.2")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -64,23 +64,17 @@ class SendResponse(BaseModel):
 
 
 class DirectSendRequest(BaseModel):
-    to_email: str = Field(..., description="Recipient email address")
-    subject: str = Field(default="Funding Offer", description="Email subject line")
-    body_html: str = Field(..., description="HTML body content to embed")
-    tone: Optional[str] = Field(
-        default=DEFAULT_TONE,
-        description="Tone template to wrap the email body",
-    )
-    dry_run: bool = Field(
-        default=True,
-        description="Simulate the send without dispatching the email",
-    )
+    to_email: EmailStr
+    subject: str = "Funding Offer"
+    body_html: str
+    tone: Literal["conservative", "assertive"] = "conservative"
+    dry_run: bool = True
 
 
 class DirectSendResponse(BaseModel):
-    id: str
     sent: bool
-    reason: Optional[str] = Field(default=None, description="Reason email was not sent")
+    id: str
+    reason: Optional[str] = None
 
 
 class StatusResponse(BaseModel):
@@ -93,6 +87,10 @@ class StatusResponse(BaseModel):
 class SuppressionResponse(BaseModel):
     email: str
     suppressed: bool
+
+
+class UnsubscribeRequest(BaseModel):
+    email: EmailStr
 
 
 def auth(credentials: HTTPAuthorizationCredentials = Depends(security)) -> None:
@@ -110,7 +108,7 @@ def health() -> Dict[str, str]:
 @app.post("/prepare", response_model=PrepareResponse)
 def prepare_endpoint(
     files: List[UploadFile] = File(...),
-    tone: str = DEFAULT_TONE,
+    tone: str = Form(DEFAULT_TONE),
     _: None = Depends(auth),
 ) -> PrepareResponse:
     if not files:
@@ -235,48 +233,30 @@ def _process_sends(
         db.update_job_status(session, job_id, status, result=summary)
 
     return summary
-
-
-def _build_direct_send_html(request: DirectSendRequest) -> str:
-    tone = (request.tone or DEFAULT_TONE).lower()
-    template_name = _resolve_template(tone)
-    context = {
-        "contact_name": "User",
-        "avg_deposits": 0,
-        "nsf_count": 0,
-        "email": request.to_email,
-        "custom_body_html": request.body_html,
-        "business_address": BUSINESS_ADDRESS,
-        "unsubscribe_url": OPTOUT_LINK,
-    }
-    return render_email(template_name, context)
-
-
 @app.post("/direct_send", response_model=DirectSendResponse)
 @sleep_and_retry
 @limits(calls=MPS_LIMIT, period=WINDOW_SECONDS)
 def direct_send_endpoint(
-    request: DirectSendRequest, _: None = Depends(auth)
+    payload: DirectSendRequest, _: None = Depends(auth)
 ) -> DirectSendResponse:
-    message_id = str(uuid4())
+    message_id = str(uuid.uuid4())
 
+    # Suppression pre-check
     with db.get_session() as session:
-        if db.is_suppressed(session, request.to_email):
-            return DirectSendResponse(id=message_id, sent=False, reason="suppressed")
+        if db.is_suppressed(session, str(payload.to_email)):
+            return DirectSendResponse(sent=False, id=message_id, reason="suppressed")
 
-    rendered_html = _build_direct_send_html(request)
-
-    if request.dry_run:
-        return DirectSendResponse(id=message_id, sent=False)
-
-    payload = EmailPayload(
-        to_email=request.to_email,
-        subject=request.subject,
-        html_content=rendered_html,
+    email_payload = EmailPayload(
+        to_email=str(payload.to_email),
+        subject=payload.subject,
+        html_content=payload.body_html,  # GPT ensures footer; accept as-is
     )
 
-    sent = send_email_with_fallback(payload)
-    return DirectSendResponse(id=message_id, sent=sent)
+    if payload.dry_run:
+        return DirectSendResponse(sent=True, id=message_id)
+
+    sent_ok = send_email_with_fallback(email_payload)
+    return DirectSendResponse(sent=bool(sent_ok), id=message_id, reason=None if sent_ok else "send failed")
 
 
 @app.get("/status/{job_id}", response_model=StatusResponse)
@@ -298,6 +278,15 @@ def unsubscribe(email: str) -> SuppressionResponse:
     with db.get_session() as session:
         added = db.add_to_suppression(session, email)
     return SuppressionResponse(email=email, suppressed=added)
+
+
+@app.post("/unsubscribe", response_model=SuppressionResponse)
+def unsubscribe_post(
+    req: UnsubscribeRequest, _: None = Depends(auth)
+) -> SuppressionResponse:
+    with db.get_session() as session:
+        added = db.add_to_suppression(session, str(req.email))
+    return SuppressionResponse(email=str(req.email), suppressed=added)
 
 
 def _resolve_template(tone: str) -> str:
