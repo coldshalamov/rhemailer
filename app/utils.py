@@ -84,17 +84,25 @@ def _build_mail(payload: EmailPayload) -> Mail:
     return message
 
 
-def _dispatch_sendgrid(message: Mail) -> None:
+def _dispatch_sendgrid(message: Mail) -> int:
     if not SENDGRID_API_KEY:
         raise RuntimeError("SENDGRID_API_KEY is not configured")
     client = SendGridAPIClient(SENDGRID_API_KEY)
-    client.send(message)
+    response = client.send(message)
+    logger.info(
+        "SendGrid response status=%s body=%s",
+        response.status_code,
+        response.body.decode("utf-8") if hasattr(response.body, "decode") else response.body,
+    )
+    return response.status_code
 
 
 @retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(3))
 def send_email(payload: EmailPayload) -> None:
     message = _build_mail(payload)
-    _dispatch_sendgrid(message)
+    status = _dispatch_sendgrid(message)
+    if status >= 400:
+        raise RuntimeError(f"SendGrid returned status {status}")
 
 
 @sleep_and_retry
