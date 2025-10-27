@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: rh-emailer
-  version: 1.0.0
+  version: 1.1.2
 paths:
   /health:
     get:
@@ -29,9 +29,12 @@ paths:
           multipart/form-data:
             schema:
               type: object
+              required: [files]
               properties:
                 tone:
                   type: string
+                  enum: [conservative, assertive]
+                  default: conservative
                 files:
                   type: array
                   items:
@@ -63,6 +66,58 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SendResponse'
+  /status/{job_id}:
+    get:
+      summary: Job status
+      operationId: status_status__job_id__get
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+  /unsubscribe:
+    get:
+      summary: Add email to suppression list
+      operationId: unsubscribe_unsubscribe_get
+      parameters:
+        - name: email
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuppressionResponse'
+    post:
+      summary: Add email to suppression list (authenticated)
+      operationId: unsubscribe_unsubscribe_post
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnsubscribeRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuppressionResponse'
   /direct_send:
     post:
       summary: Send a single email immediately
@@ -82,42 +137,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DirectSendResponse'
-  /status/{job_id}:
-    get:
-      summary: Retrieve job status
-      operationId: status_status__job_id__get
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: job_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StatusResponse'
-  /unsubscribe:
-    get:
-      summary: Add email to suppression list
-      operationId: unsubscribe_unsubscribe_get
-      parameters:
-        - name: email
-          in: query
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SuppressionResponse'
 components:
   securitySchemes:
     bearerAuth:
@@ -127,106 +146,68 @@ components:
     PrepareResponse:
       type: object
       properties:
-        prepare_id:
-          type: string
-        count:
-          type: integer
+        prepare_id: { type: string }
+        count: { type: integer }
         preview:
           type: array
           items:
             type: object
             properties:
-              lead:
-                type: object
-              email_html:
-                type: string
-        metrics:
-          type: object
-      required:
-        - prepare_id
-        - count
-        - preview
-        - metrics
+              lead: { type: object }
+              email_html: { type: string }
+        metrics: { type: object }
+      required: [prepare_id, count, preview, metrics]
     SendRequest:
       type: object
       properties:
-        prepare_id:
-          type: string
-        dry_run:
-          type: boolean
-          default: true
+        prepare_id: { type: string }
+        dry_run: { type: boolean, default: true }
         tone:
           type: string
-      required:
-        - prepare_id
+          nullable: true
+      required: [prepare_id]
     SendResponse:
       type: object
       properties:
-        job_id:
-          type: string
-        queued:
-          type: boolean
-        summary:
-          type: object
-      required:
-        - job_id
-        - queued
-        - summary
+        job_id: { type: string }
+        queued: { type: boolean }
+        summary: { type: object }
+      required: [job_id, queued, summary]
     DirectSendRequest:
       type: object
       properties:
-        to_email:
-          type: string
-        subject:
-          type: string
-          default: Funding Offer
-        body_html:
-          type: string
+        to_email: { type: string, format: email }
+        subject: { type: string, default: Funding Offer }
+        body_html: { type: string }
         tone:
           type: string
+          enum: [conservative, assertive]
           default: conservative
-        dry_run:
-          type: boolean
-          default: true
-      required:
-        - to_email
-        - body_html
+        dry_run: { type: boolean, default: true }
+      required: [to_email, body_html]
     DirectSendResponse:
       type: object
       properties:
-        id:
-          type: string
-        sent:
-          type: boolean
-        reason:
-          type: string
-          nullable: true
-      required:
-        - id
-        - sent
+        sent: { type: boolean }
+        id: { type: string }
+        reason: { type: string, nullable: true }
+      required: [sent, id]
     StatusResponse:
       type: object
       properties:
-        job_id:
-          type: string
-        status:
-          type: string
-        payload:
-          type: object
-          nullable: true
-        result:
-          type: object
-          nullable: true
-      required:
-        - job_id
-        - status
+        job_id: { type: string }
+        status: { type: string }
+        payload: { type: object, nullable: true }
+        result: { type: object, nullable: true }
+      required: [job_id, status]
+    UnsubscribeRequest:
+      type: object
+      properties:
+        email: { type: string, format: email }
+      required: [email]
     SuppressionResponse:
       type: object
       properties:
-        email:
-          type: string
-        suppressed:
-          type: boolean
-      required:
-        - email
-        - suppressed
+        email: { type: string }
+        suppressed: { type: boolean }
+      required: [email, suppressed]

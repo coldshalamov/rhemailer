@@ -10,8 +10,9 @@ rate-limited SendGrid delivery with human-in-the-loop controls.
   return previews for human approval.
 - **/send** – Queue email sends with conservative or assertive tone templates, supporting
   dry-run workflows and SendGrid delivery.
+- **/direct_send** – Deliver a single templated HTML email or dry-run a GPT-crafted draft.
 - **/status** – Poll job records to monitor preparation and send progress.
-- **/unsubscribe** – Suppress recipients to ensure CAN-SPAM compliance.
+- **/unsubscribe** – Suppress recipients to ensure CAN-SPAM compliance (GET and POST).
 - **/health** – Lightweight health probe for infrastructure checks.
 
 ## Local Development
@@ -24,6 +25,28 @@ uvicorn app.main:app --reload
 ```
 
 Visit `http://localhost:8000/docs` for Swagger UI.
+
+## API Quickstart
+
+```bash
+# health
+curl -s http://localhost:8000/health
+
+# single (dry run)
+curl -s -X POST http://localhost:8000/direct_send \
+  -H "Authorization: Bearer dev" -H "Content-Type: application/json" \
+  -d '{"to_email":"test@example.com","subject":"Hello","body_html":"<p>Hi</p>","dry_run":true}'
+
+# prepare batch with multipart tone override
+curl -s -X POST http://localhost:8000/prepare \
+  -H "Authorization: Bearer dev" \
+  -F "tone=assertive" -F "files=@samples/sample_leads.csv"
+
+# unsubscribe via POST (auth required)
+curl -s -X POST http://localhost:8000/unsubscribe \
+  -H "Authorization: Bearer dev" -H "Content-Type: application/json" \
+  -d '{"email":"optout@example.com"}'
+```
 
 ### Environment Variables
 
@@ -39,7 +62,7 @@ Visit `http://localhost:8000/docs` for Swagger UI.
 | `OPTOUT_LINK` | Opt-out URL | `https://rhfunding.io/unsubscribe` |
 | `MPS_LIMIT` | Emails/min | `60` |
 | `WINDOW_SECONDS` | Rate window | `60` |
-| `DB_PATH` | SQLite path | `sqlite:///tmp/emailer.db` |
+| `DB_PATH` | SQLite path | `sqlite:////tmp/emailer.db` |
 | `REPLY_TO_EMAIL` | Reply-to address for outreach messages. | `funding@rhfunding.io` |
 | `LOG_LEVEL` | Application log verbosity. | `INFO` |
 
