@@ -291,12 +291,15 @@ def direct_send_endpoint(
         return DirectSendResponse(sent=True, id=message_id)
 
     try:
-        sent_ok = send_email_with_fallback(email_payload)
+        sent_ok, send_error = send_email_with_fallback(email_payload)
     except Exception:
         logger.exception("direct_send send failed")
         return DirectSendResponse(sent=False, id=message_id, reason="send failed")
 
-    return DirectSendResponse(sent=bool(sent_ok), id=message_id, reason=None if sent_ok else "send failed")
+    if not sent_ok:
+        return DirectSendResponse(sent=False, id=message_id, reason=send_error or "send failed")
+
+    return DirectSendResponse(sent=True, id=message_id, reason=None)
 
 
 @app.get("/status/{job_id}", response_model=StatusResponse)

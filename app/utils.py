@@ -99,13 +99,18 @@ def send_email(payload: EmailPayload) -> None:
 
 @sleep_and_retry
 @limits(calls=MPS_LIMIT, period=WINDOW_SECONDS)
-def send_email_with_fallback(payload: EmailPayload) -> bool:
+def send_email_with_fallback(payload: EmailPayload) -> tuple[bool, Optional[str]]:
     try:
         send_email(payload)
-        return True
+        return True, None
     except RetryError as exc:  # pragma: no cover - informational logging
-        logger.error("Failed to send email after retries: %s", exc)
-        return False
+        last_exc = exc.last_attempt.exception() if getattr(exc, "last_attempt", None) else exc
+        logger.error(
+            "Failed to send email after retries. Last error: %s",
+            last_exc,
+            exc_info=last_exc,
+        )
+        return False, str(last_exc)
     except Exception as exc:  # pragma: no cover - unexpected
         logger.exception("Unexpected error while sending email: %s", exc)
-        return False
+        return False, str(exc)

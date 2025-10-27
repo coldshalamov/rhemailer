@@ -40,15 +40,13 @@ def test_health_includes_version(client: TestClient) -> None:
 
 
 def test_direct_send_json_dry_run_ok(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
-    from app import utils
-
     called = {"value": False}
 
     def fake_send(_payload):
         called["value"] = True
-        return True
+        return True, None
 
-    monkeypatch.setattr(utils, "send_email_with_fallback", fake_send)
+    monkeypatch.setattr("app.main.send_email_with_fallback", fake_send)
 
     payload = {
         "to_email": "test@example.com",
@@ -65,12 +63,10 @@ def test_direct_send_json_dry_run_ok(monkeypatch: pytest.MonkeyPatch, client: Te
 
 
 def test_direct_send_legacy_payload_ok(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
-    from app import utils
-
     def fake_send(_payload):
-        return True
+        return True, None
 
-    monkeypatch.setattr(utils, "send_email_with_fallback", fake_send)
+    monkeypatch.setattr("app.main.send_email_with_fallback", fake_send)
 
     legacy = {
         "to_email": "test@example.com",
@@ -120,12 +116,10 @@ def test_direct_send_invalid_legacy_json(client: TestClient) -> None:
 
 
 def test_direct_send_real_send_failure(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
-    from app import utils
-
     def fake_send(_payload):
-        raise RuntimeError("send fail")
+        return False, "send failed"
 
-    monkeypatch.setattr(utils, "send_email_with_fallback", fake_send)
+    monkeypatch.setattr("app.main.send_email_with_fallback", fake_send)
 
     payload = {
         "to_email": "test@example.com",
