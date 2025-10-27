@@ -68,7 +68,10 @@ components:
     DirectSendRequest:
       type: object
       properties:
-        to_email: { type: string, format: email }
+        to_email:
+          oneOf:
+            - { type: string, format: email }
+            - { type: array, items: { type: string, format: email }, minItems: 1 }
         subject: { type: string, default: Funding Offer }
         body_html: { type: string }
         tone:
@@ -78,12 +81,23 @@ components:
         dry_run: { type: boolean, default: true }
       required: [to_email, body_html]
 
+    DirectSendRecipientResult:
+      type: object
+      properties:
+        email: { type: string, format: email }
+        sent: { type: boolean }
+        reason: { type: string, nullable: true }
+      required: [email, sent]
+
     DirectSendResponse:
       type: object
       properties:
         sent: { type: boolean }
         id: { type: string }
         reason: { type: string, nullable: true }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/DirectSendRecipientResult' }
       required: [sent, id]
 
 security:

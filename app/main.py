@@ -1,16 +1,16 @@
 """FastAPI application entrypoint for rh-emailer."""
 
+import json
 import logging
 import os
+import re
 import uuid
-from typing import Any, Dict, List, Optional, Literal
-
-import json
+from typing import Any, Dict, List, Optional, Literal, Union
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from ratelimit import limits, sleep_and_retry
 
 from . import db
@@ -64,20 +64,44 @@ class SendResponse(BaseModel):
 
 
 class DirectSendRequest(BaseModel):
-    to_email: EmailStr
+    to_email: Union[EmailStr, List[EmailStr]]
     subject: str = "Funding Offer"
     body_html: str
     tone: Literal["conservative", "assertive"] = "conservative"
     dry_run: bool = True
+
+    @field_validator("to_email")
+    @classmethod
+    def _explode_recipients(cls, value: Union[EmailStr, List[EmailStr], str]) -> Union[EmailStr, List[EmailStr]]:
+        if isinstance(value, list):
+            if not value:
+                raise ValueError("At least one recipient email is required.")
+            return value
+        if isinstance(value, str):
+            candidates = [part.strip() for part in re.split(r"[;,]", value) if part.strip()]
+            if len(candidates) > 1:
+                return candidates
+            return value
+        if isinstance(value, EmailStr):
+            return value
+        raise ValueError("to_email must be a string or list of email addresses.")
+
+
+class DirectSendRecipientResult(BaseModel):
+    email: EmailStr
+    sent: bool
+    reason: Optional[str] = None
 
 
 class DirectSendResponse(BaseModel):
     sent: bool
     id: str
     reason: Optional[str] = None
+    results: Optional[List[DirectSendRecipientResult]] = None
 
 
 DirectSendRequest.model_rebuild()
+DirectSendRecipientResult.model_rebuild()
 DirectSendResponse.model_rebuild()
 
 class StatusResponse(BaseModel):
@@ -238,6 +262,22 @@ def _process_sends(
     return summary
 
 
+def _normalize_recipients(raw: Union[EmailStr, List[EmailStr]]) -> List[str]:
+    if isinstance(raw, list):
+        candidates = [str(email) for email in raw]
+    else:
+        candidates = [str(raw)]
+
+    unique: List[str] = []
+    seen = set()
+    for email in candidates:
+        lowered = email.lower()
+        if lowered not in seen:
+            seen.add(lowered)
+            unique.append(email)
+    return unique
+
+
 @app.post("/direct_send", response_model=DirectSendResponse)
 @sleep_and_retry
 @limits(calls=MPS_LIMIT, period=WINDOW_SECONDS)
@@ -275,31 +315,64 @@ def direct_send_endpoint(
     if not payload.body_html or not str(payload.body_html).strip():
         raise HTTPException(status_code=422, detail="body_html is required and cannot be empty.")
 
-    # Suppression pre-check
-    with db.get_session() as session:
-        if db.is_suppressed(session, str(payload.to_email)):
-            return DirectSendResponse(sent=False, id=message_id, reason="suppressed")
+    recipients = _normalize_recipients(payload.to_email)
+    if not recipients:
+        raise HTTPException(status_code=422, detail="At least one recipient email is required.")
 
-    email_payload = EmailPayload(
-        to_email=str(payload.to_email),
-        subject=payload.subject,
-        html_content=payload.body_html,  # footer should already be present per agent
+    results: List[DirectSendRecipientResult] = []
+    any_success = False
+    any_failure = False
+
+    for email in recipients:
+        with db.get_session() as session:
+            if db.is_suppressed(session, email):
+                results.append(DirectSendRecipientResult(email=email, sent=False, reason="suppressed"))
+                any_failure = True
+                continue
+
+        email_payload = EmailPayload(
+            to_email=email,
+            subject=payload.subject,
+            html_content=payload.body_html,  # footer should already be present per agent
+        )
+
+        if payload.dry_run:
+            results.append(DirectSendRecipientResult(email=email, sent=True))
+            any_success = True
+            continue
+
+        try:
+            sent_ok, send_error = send_email_with_fallback(email_payload)
+        except Exception:
+            logger.exception("direct_send send failed for recipient %s", email)
+            results.append(DirectSendRecipientResult(email=email, sent=False, reason="send failed"))
+            any_failure = True
+            continue
+
+        if not sent_ok:
+            results.append(
+                DirectSendRecipientResult(email=email, sent=False, reason=send_error or "send failed")
+            )
+            any_failure = True
+        else:
+            results.append(DirectSendRecipientResult(email=email, sent=True))
+            any_success = True
+
+    if not results:
+        return DirectSendResponse(sent=False, id=message_id, reason="no recipients provided", results=results)
+
+    any_failure = any(not item.sent for item in results)
+    any_success = any(item.sent for item in results)
+
+    failure_reasons = sorted({res.reason or "failed" for res in results if not res.sent}) if any_failure else []
+    reason = None if not failure_reasons else "; ".join(failure_reasons)
+
+    return DirectSendResponse(
+        sent=any_success and not any_failure,
+        id=message_id,
+        reason=reason,
+        results=results,
     )
-
-    # Dry-run behavior: indicate acceptance without delivery
-    if payload.dry_run:
-        return DirectSendResponse(sent=True, id=message_id)
-
-    try:
-        sent_ok, send_error = send_email_with_fallback(email_payload)
-    except Exception:
-        logger.exception("direct_send send failed")
-        return DirectSendResponse(sent=False, id=message_id, reason="send failed")
-
-    if not sent_ok:
-        return DirectSendResponse(sent=False, id=message_id, reason=send_error or "send failed")
-
-    return DirectSendResponse(sent=True, id=message_id, reason=None)
 
 
 @app.get("/status/{job_id}", response_model=StatusResponse)

@@ -60,6 +60,9 @@ def test_direct_send_json_dry_run_ok(monkeypatch: pytest.MonkeyPatch, client: Te
     assert body["sent"] is True
     assert "id" in body
     assert called["value"] is False
+    assert body["reason"] is None
+    assert body["results"][0]["email"] == "test@example.com"
+    assert body["results"][0]["sent"] is True
 
 
 def test_direct_send_legacy_payload_ok(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
@@ -77,7 +80,9 @@ def test_direct_send_legacy_payload_ok(monkeypatch: pytest.MonkeyPatch, client: 
     q = json.dumps(legacy)
     res = client.post(f"/direct_send?payload={q}", headers=auth())
     assert res.status_code == 200
-    assert res.json()["sent"] is True
+    body = res.json()
+    assert body["sent"] is True
+    assert body["results"][0]["email"] == "test@example.com"
 
 
 def test_direct_send_suppressed(client: TestClient) -> None:
@@ -95,6 +100,8 @@ def test_direct_send_suppressed(client: TestClient) -> None:
     body = res.json()
     assert body["sent"] is False
     assert body["reason"] == "suppressed"
+    assert body["results"][0]["email"] == "test@example.com"
+    assert body["results"][0]["sent"] is False
 
 
 def test_direct_send_empty_body_html_rejected(client: TestClient) -> None:
@@ -132,3 +139,28 @@ def test_direct_send_real_send_failure(monkeypatch: pytest.MonkeyPatch, client: 
     body = res.json()
     assert body["sent"] is False
     assert body["reason"] == "send failed"
+    assert body["results"][0]["reason"] == "send failed"
+
+
+def test_direct_send_multiple_recipients(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
+    calls = []
+
+    def fake_send(payload):
+        calls.append(payload.to_email)
+        return True, None
+
+    monkeypatch.setattr("app.main.send_email_with_fallback", fake_send)
+
+    payload = {
+        "to_email": ["user1@example.com", "user2@example.com"],
+        "subject": "Test",
+        "body_html": "<p>hi</p>",
+        "dry_run": False,
+    }
+    res = client.post("/direct_send", headers=auth(), json=payload)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["sent"] is True
+    assert len(body["results"]) == 2
+    assert {result["email"] for result in body["results"]} == {"user1@example.com", "user2@example.com"}
+    assert len(calls) == 2
